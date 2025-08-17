@@ -93,18 +93,30 @@ body {
   transition: transform .15s ease, border-color .2s ease;
 }
 .card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.card.selected { outline: 2px solid var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.selecting .card { cursor: copy; }
 .thumb { aspect-ratio: 1.2/1; display: grid; place-items: center; background: color-mix(in srgb, var(--card) 60%, transparent); }
 .thumb img { max-width: 85%; height: auto; image-rendering: -webkit-optimize-contrast; }
 .meta { padding: 10px 12px 12px; display: grid; gap: 6px; }
+.tab-compare .card .meta { padding-bottom: 52px; }
 .name { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .id { color: var(--muted); font-variant-numeric: tabular-nums; }
 .badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .badge { font-size: 12px; padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); }
 
+/* Hide type filter in Items tab */
+body.tab-items label[for="typeFilter"] { display: none; }
+
 /* Fav icon */
 .fav-btn { position: absolute; top: 8px; right: 8px; background: color-mix(in srgb, var(--card) 70%, transparent); border: 1px solid var(--border); border-radius: 10px; padding: 6px; cursor: pointer; box-shadow: var(--shadow); color: var(--muted); }
 .fav-btn:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .fav-btn.active { color: var(--star); border-color: color-mix(in srgb, var(--star) 60%, var(--border)); background: color-mix(in srgb, var(--star) 10%, var(--card)); outline: 0; }
+body.tab-compare .fav-btn { display: none; }
+
+/* Bottom compare CTA (only in Compare tab) */
+.actions-bottom { position: absolute; left: 0; right: 0; bottom: 8px; display: grid; place-items: center; pointer-events: none; }
+.btn-compare { pointer-events: auto; cursor: pointer; border: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 20%, var(--card)); color: var(--text); padding: 10px 14px; border-radius: 999px; box-shadow: var(--shadow); }
+.btn-compare.active { background: color-mix(in srgb, var(--accent) 35%, var(--card)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
 
 /* Skeleton */
 .skeleton { position: relative; overflow: hidden; background: color-mix(in srgb, var(--card) 80%, transparent); }

@@ -73,6 +73,18 @@ function hexAlpha(hex, a=0.15){
 }
 function showAlert(msg) { const el = $('#alert'); el.textContent = msg; el.hidden = !msg; }
 
+// Quick UI reset of search/type/gen without triggering recompute
+function clearFiltersUI(){
+  const si = $('#searchInput'); const tf = $('#typeFilter'); const gf = $('#genFilter');
+  if (si) si.value = '';
+  if (tf) tf.value = '';
+  if (gf) gf.value = '';
+  state.currentType = '';
+  state.currentGen = '';
+  state.searchTerm = '';
+  setParams({ q: '', type: '', gen: '', tab: currentTab });
+}
+
 // ===== URL Sync =====
 function getParams(){ const p = new URLSearchParams(location.search); return { q: p.get('q')||'', type: p.get('type')||'', gen: p.get('gen')||'', tab: p.get('tab')||'explore' }; }
 function setParams({q, type, gen, tab}={}){
@@ -100,6 +112,14 @@ const loadMoreBtn = $('#loadMore');
 const compareBar = $('#compareBar');
 const compareList = $('#compareList');
 const compareClear = $('#compareClear');
+const compareGo = $('#compareGo');
+let compareViewArmed = false; // show columns only after pressing Compare in Compare tab
+
+// Toolbar visibility helpers
+function updateToolbarVisibility(){
+  const typeLabel = document.querySelector('label[for="typeFilter"]');
+  if (typeLabel) typeLabel.style.display = (currentTab==='items') ? 'none' : '';
+}
 function cardSkeleton() {
   const c = document.createElement('article');
   c.className = 'card';
@@ -120,9 +140,11 @@ function favButton(p){
   return b;
 }
 
+
 function cardFor(p) {
   const c = document.createElement('article');
-  c.className = 'card'; c.tabIndex = 0; c.setAttribute('role','button'); c.setAttribute('aria-label', `Abrir ${p.name}`);
+  c.className = 'card'; c.tabIndex = 0; c.setAttribute('role','button'); c.setAttribute('aria-label', `Abrir ${p.name}`); c.dataset.id = String(p.id);
+  c.classList.toggle('selected', compareSet.has(p.id));
   const types = p.types?.map(t=>t.type.name) || [];
   c.innerHTML = `
     <div class="thumb"><img loading="lazy" src="${artwork(p)}" alt="${p.name}" /></div>
@@ -130,18 +152,39 @@ function cardFor(p) {
       <div class="name"><strong>${cap(p.name)}</strong><span class="id">${idFmt(p.id)}</span></div>
       <div class="badges">${types.map(t => `<span class="badge" style="border-color:${typeColors.get(t)||'var(--border)'};background: ${hexAlpha(typeColors.get(t)||'#888', 0.12)}">${t}</span>`).join('')}</div>
     </div>`;
-  c.appendChild(favButton(p));
+  if (currentTab !== 'compare') {
+    // Vista regular: solo favoritos
+    c.appendChild(favButton(p));
+  } else {
+    // En Comparar: botón redondeado inferior para añadir/quitar
+    c.appendChild(compareCta(p));
+  }
   c.addEventListener('click', (e) => {
-    if (currentTab === 'compare') { addToCompare(p); e.stopPropagation(); return; }
+  if (currentTab === 'compare') { addToCompare(p); e.stopPropagation(); return; }
     openModal(p);
   });
   c.addEventListener('keydown', (e)=>{
     if (e.key==='Enter' || e.key===' ') {
       e.preventDefault();
-      if (currentTab === 'compare') addToCompare(p); else openModal(p);
+  if (currentTab === 'compare') addToCompare(p); else openModal(p);
     }
   });
   return c;
+}
+
+function compareCta(p){
+  const wrap = document.createElement('div'); wrap.className = 'actions-bottom';
+  const btn = document.createElement('button'); btn.className = 'btn btn-compare'; btn.type = 'button';
+  const sync = ()=>{ const on = compareSet.has(p.id); btn.textContent = on ? 'Quitar' : 'Comparar'; btn.classList.toggle('active', on); };
+  sync();
+  btn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    if (compareSet.has(p.id)) removeFromCompare(p.id); else addToCompare(p);
+    sync();
+    const card = btn.closest('.card[data-id]'); if (card) card.classList.toggle('selected', compareSet.has(p.id));
+  });
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 // ===== State & Flow =====
@@ -250,11 +293,24 @@ async function getTypeNames(typeName){
   return names;
 }
 
+async function getDefaultPokemonNameForSpecies(speciesName){
+  try {
+    const sp = await fetchJSON(API.species(speciesName));
+    const def = (sp?.varieties || []).find(v=>v.is_default);
+    return def?.pokemon?.name || speciesName; // fallback to species name
+  } catch {
+    return speciesName;
+  }
+}
+
 async function getGenNames(genName){
+  // Returns a Set of default Pokémon names for the generation
   if (!genName) return new Set();
   if (listCache.gen.has(genName)) return listCache.gen.get(genName);
   const data = await fetchJSON(API.generation(genName));
-  const set = new Set((data?.pokemon_species || []).map(s=>s.name));
+  const species = (data?.pokemon_species || []).map(s=>s.name);
+  const names = await pMap(species, n=>getDefaultPokemonNameForSpecies(n), 10);
+  const set = new Set(names);
   listCache.gen.set(genName, set);
   return set;
 }
@@ -294,10 +350,10 @@ async function recomputeResults(){
       } else if (currentGen) {
         names = Array.from(await getGenNames(currentGen)).slice(0, maxCount);
       }
-      const detailed = await pMap(names, async name => ensurePokemon(name), 10);
+    const detailed = (await pMap(names, async name => { try { return await ensurePokemon(name); } catch { return null; } }, 10)).filter(Boolean);
       grid.innerHTML = '';
-      detailed.sort((a,b)=>a.id-b.id).forEach(p=> grid.appendChild(cardFor(p)));
-      if (names.length===0) showAlert('Sin resultados con los filtros actuales.');
+    detailed.sort((a,b)=>a.id-b.id).forEach(p=> grid.appendChild(cardFor(p)));
+    if (detailed.length===0) showAlert('Sin resultados con los filtros actuales.');
     }
   } catch (e) {
     grid.innerHTML = '';
@@ -312,12 +368,30 @@ async function recomputeResults(){
 
 async function applyTypeFilter(typeName) {
   state.currentType = typeName || '';
-  await recomputeResults();
+  if (currentTab === 'explore') {
+    await recomputeResults();
+  } else if (currentTab === 'evolutions') {
+    await renderEvolutionCatalog();
+  } else if (currentTab === 'items') {
+    // Type filter does not apply to items; ignore and just refresh items view
+    grid.innerHTML='';
+    showAlert('');
+    if (itemsState.searchTerm) await runItemSearch(itemsState.searchTerm); else { itemsState.mode='browse'; itemsState.nextOffset=0; await loadNextItemsPage(); }
+  }
 }
 
 async function applyGenerationFilter(gen) {
   state.currentGen = gen || '';
-  await recomputeResults();
+  if (currentTab === 'explore') {
+    await recomputeResults();
+  } else if (currentTab === 'evolutions') {
+    await renderEvolutionCatalog();
+  } else if (currentTab === 'items') {
+    // Generation filter not applicable to items listing; just refresh items view
+    grid.innerHTML='';
+    showAlert('');
+    if (itemsState.searchTerm) await runItemSearch(itemsState.searchTerm); else { itemsState.mode='browse'; itemsState.nextOffset=0; await loadNextItemsPage(); }
+  }
 }
 
 async function runSearch(q) {
@@ -510,6 +584,13 @@ const tabs = $$('.tab');
 tabs.forEach(t => t.addEventListener('click', ()=>{
   tabs.forEach(x=>{ x.classList.toggle('active', x===t); x.setAttribute('aria-selected', x===t); });
   currentTab = t.dataset.tab;
+  // Clear any lingering alert from previous tab (e.g., empty favorites)
+  showAlert('');
+  document.body.classList.toggle('tab-compare', currentTab==='compare');
+  document.body.classList.toggle('tab-items', currentTab==='items');
+  updateToolbarVisibility();
+  // reset gated compare when leaving Compare tab
+  if (currentTab !== 'compare') compareViewArmed = false;
   if (currentTab === 'explore') {
     // restaurar vista de exploración (no favoritos)
     grid.innerHTML = '';
@@ -523,10 +604,12 @@ tabs.forEach(t => t.addEventListener('click', ()=>{
   } else if (currentTab === 'evolutions') {
     renderEvolutionCatalog();
   } else if (currentTab === 'items') {
-    grid.innerHTML = '';
-    itemsState.mode='browse'; itemsState.nextOffset=0; loadNextItemsPage();
+  grid.innerHTML = '';
+  itemsState.mode = itemsState.searchTerm ? 'search' : 'browse';
+  itemsState.nextOffset = 0; 
+  if (itemsState.mode==='search') runItemSearch(itemsState.searchTerm); else loadNextItemsPage();
   } else if (currentTab === 'compare') {
-    if (compareSet.size > 0) renderCompareView(); else renderCompareIntro();
+    if (compareViewArmed && compareSet.size > 0) renderCompareView(); else renderCompareIntro();
   }
   setParams({ q: state.searchTerm, type: state.currentType, gen: state.currentGen, tab: currentTab });
   updateLoadMoreVisibility();
@@ -585,13 +668,16 @@ function addToCompare(p){
   if (!compareSet.has(p.id) && compareSet.size >= MAX_COMPARE) { showAlert(`Máximo ${MAX_COMPARE} para comparar.`); return; }
   compareSet.add(p.id);
   renderCompareBar();
-  if (currentTab === 'compare') renderCompareView();
+  if (currentTab === 'compare') {
+    if (compareViewArmed) renderCompareView(); else renderCompareIntro();
+  }
 }
 function removeFromCompare(id){
   compareSet.delete(id);
   renderCompareBar();
   if (currentTab === 'compare') {
-    if (compareSet.size > 0) renderCompareView(); else renderCompareIntro();
+  if (compareSet.size > 0) { if (compareViewArmed) renderCompareView(); else renderCompareIntro(); }
+  else { compareViewArmed = false; renderCompareIntro(); }
   }
 }
 function renderCompareBar(){
@@ -610,8 +696,29 @@ function renderCompareBar(){
       compareList.appendChild(pill);
     });
   })();
+  // Update Compare button state
+  if (compareGo) compareGo.disabled = (compareSet.size === 0);
+  // Highlight selected cards in current grid
+  updateSelectedCardsHighlight();
 }
-compareClear?.addEventListener('click', ()=>{ compareSet.clear(); renderCompareBar(); if (currentTab==='compare') renderCompareIntro(); });
+compareClear?.addEventListener('click', ()=>{ compareSet.clear(); compareViewArmed = false; renderCompareBar(); if (currentTab==='compare') renderCompareIntro(); });
+compareGo?.addEventListener('click', ()=>{
+  if (currentTab !== 'compare') {
+    const tabBtn = tabs.find(x=>x.dataset.tab==='compare');
+    tabBtn?.click();
+  } else {
+    if (compareSet.size === 0) { showAlert('Selecciona al menos un Pokémon para comparar.'); return; }
+    compareViewArmed = true; renderCompareView();
+  }
+});
+function updateSelectedCardsHighlight(){
+  try {
+    $$('.card[data-id]').forEach(el=>{
+      const id = Number(el.dataset.id);
+      el.classList.toggle('selected', compareSet.has(id));
+    });
+  } catch {}
+}
 
 function renderCompareIntro(){
   showAlert('Haz clic en tarjetas para añadirlas a la comparación.');
@@ -694,6 +801,7 @@ window.addEventListener('hashchange', async ()=>{
   }
   // Ensure compare bar visibility is correct on startup
   renderCompareBar();
+  updateToolbarVisibility();
 })();
 
 // Evolutions Tab (catalog)
