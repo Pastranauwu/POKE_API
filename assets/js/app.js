@@ -115,6 +115,10 @@ const compareClear = $('#compareClear');
 const compareGo = $('#compareGo');
 let compareViewArmed = false; // show columns only after pressing Compare in Compare tab
 
+// Prevent stale async renders across tabs/views
+let viewToken = 0;
+const newView = () => (++viewToken);
+
 // Toolbar visibility helpers
 function updateToolbarVisibility(){
   const typeLabel = document.querySelector('label[for="typeFilter"]');
@@ -244,39 +248,47 @@ async function ensureItem(idOrNameOrUrl){
 
 async function loadNextPage() {
   if (state.loading || state.mode !== 'browse') return;
+  const token = viewToken;
   state.loading = true; grid.setAttribute('aria-busy','true');
   const skeletons = Array.from({length: 8}, cardSkeleton);
-  skeletons.forEach(s => grid.appendChild(s));
+  skeletons.forEach(s => { if (token===viewToken) grid.appendChild(s); });
   try {
     const data = await fetchJSON(API.list(state.pageSize, state.nextOffset));
     state.nextOffset += state.pageSize;
     const detailed = await pMap(data.results, async r => ensurePokemon(r.url), 8);
+    if (token!==viewToken) return;
     skeletons.forEach(el => el.remove());
     detailed.forEach(p => grid.appendChild(cardFor(p)));
   } catch (e) {
-    showAlert('No pudimos cargar más Pokémon. Intenta de nuevo.');
+    if (token===viewToken) showAlert('No pudimos cargar más Pokémon. Intenta de nuevo.');
     console.error(e);
   } finally {
-    state.loading = false; grid.setAttribute('aria-busy','false');
+  // Always release loading flag; new view will set its own busy state
+  state.loading = false;
+  grid.setAttribute('aria-busy','false');
   updateLoadMoreVisibility();
   }
 }
 
 async function loadNextItemsPage(){
   if (itemsState.loading || itemsState.mode !== 'browse') return;
+  const token = viewToken;
   itemsState.loading = true; grid.setAttribute('aria-busy','true');
-  const skeletons = Array.from({length: 8}, cardSkeleton); skeletons.forEach(s=>grid.appendChild(s));
+  const skeletons = Array.from({length: 8}, cardSkeleton); skeletons.forEach(s=>{ if (token===viewToken) grid.appendChild(s); });
   try {
     const data = await fetchJSON(API.items(itemsState.pageSize, itemsState.nextOffset));
     itemsState.nextOffset += itemsState.pageSize;
     const detailed = await pMap(data.results, r=>ensureItem(r.url), 8);
+    if (token!==viewToken) return;
     skeletons.forEach(el=>el.remove());
     detailed.forEach(it=> grid.appendChild(cardForItem(it)));
   } catch(e){
-    showAlert('No pudimos cargar más items.');
+    if (token===viewToken) showAlert('No pudimos cargar más items.');
     console.error(e);
   } finally {
-    itemsState.loading = false; grid.setAttribute('aria-busy','false');
+  // Always release loading flag to avoid getting stuck
+  itemsState.loading = false;
+  grid.setAttribute('aria-busy','false');
   updateLoadMoreVisibility();
   }
 }
@@ -317,15 +329,16 @@ async function getGenNames(genName){
 
 async function recomputeResults(){
   const { currentType, currentGen, searchTerm } = state;
+  const token = viewToken;
   grid.innerHTML = '';
   showAlert('');
   // No filters -> browse mode with infinite scroll
   if (!currentType && !currentGen && !searchTerm) {
-  state.mode = 'browse'; state.nextOffset = 0; await loadNextPage(); return;
+  state.mode = 'browse'; state.nextOffset = 0; state.loading = false; await loadNextPage(); return;
   }
   state.mode = searchTerm ? 'search' : 'filter';
   grid.setAttribute('aria-busy','true');
-  const skeletons = Array.from({length: 12}, cardSkeleton); skeletons.forEach(s=>grid.appendChild(s));
+  const skeletons = Array.from({length: 12}, cardSkeleton); skeletons.forEach(s=>{ if (token===viewToken) grid.appendChild(s); });
   try {
     if (searchTerm) {
       // Single item search constrained by filters if any
@@ -337,7 +350,8 @@ async function recomputeResults(){
         const genSet = await getGenNames(currentGen);
         if (!genSet.has(p.name)) throw new Error('no-match');
       }
-      grid.innerHTML=''; grid.appendChild(cardFor(p));
+  if (token!==viewToken) return;
+  grid.innerHTML=''; grid.appendChild(cardFor(p));
     } else {
       let names = [];
       const capCount = (val)=> (val==='all'||!val) ? Infinity : Number(val);
@@ -351,22 +365,23 @@ async function recomputeResults(){
         names = Array.from(await getGenNames(currentGen)).slice(0, maxCount);
       }
     const detailed = (await pMap(names, async name => { try { return await ensurePokemon(name); } catch { return null; } }, 10)).filter(Boolean);
+      if (token!==viewToken) return;
       grid.innerHTML = '';
-    detailed.sort((a,b)=>a.id-b.id).forEach(p=> grid.appendChild(cardFor(p)));
-    if (detailed.length===0) showAlert('Sin resultados con los filtros actuales.');
+      detailed.sort((a,b)=>a.id-b.id).forEach(p=> grid.appendChild(cardFor(p)));
+      if (detailed.length===0) showAlert('Sin resultados con los filtros actuales.');
     }
   } catch (e) {
-    grid.innerHTML = '';
-    showAlert('No hay resultados con los filtros actuales.');
+    if (token===viewToken) { grid.innerHTML = ''; showAlert('No hay resultados con los filtros actuales.'); }
     if (e?.message !== 'no-match') console.warn(e);
   } finally {
-    grid.setAttribute('aria-busy','false');
+    if (token===viewToken) grid.setAttribute('aria-busy','false');
   }
   setParams({ q: state.searchTerm, type: state.currentType, gen: state.currentGen, tab: currentTab });
   updateLoadMoreVisibility();
 }
 
 async function applyTypeFilter(typeName) {
+  newView();
   state.currentType = typeName || '';
   if (currentTab === 'explore') {
     await recomputeResults();
@@ -381,6 +396,7 @@ async function applyTypeFilter(typeName) {
 }
 
 async function applyGenerationFilter(gen) {
+  newView();
   state.currentGen = gen || '';
   if (currentTab === 'explore') {
     await recomputeResults();
@@ -455,7 +471,8 @@ window.addEventListener('keydown', (e)=>{ if (e.key==='Escape') closeModal(); })
 async function loadEvolutions(p){
   const box = $('#modalEvos'); if (!box) return; box.innerHTML = '';
   try {
-    const species = await fetchJSON(API.species(p.id));
+  const speciesUrl = p?.species?.url || API.species(p.id);
+  const species = await fetchJSON(speciesUrl);
     const chainUrl = species?.evolution_chain?.url; if (!chainUrl) return;
     const chainId = chainUrl.match(/evolution-chain\/(\d+)/)?.[1];
     const chain = await fetchJSON(API.evolutionChain(chainId));
@@ -482,8 +499,10 @@ async function loadEvolutions(p){
     }
 
     // Gather all unique names to prefetch
+  // Normalize species names to default Pokémon names to avoid 404s on forms
   const names = Array.from(new Set(paths.flat().map(s=>s.name)));
-  const fetched = await pMap(names, async n=>{ try { return await ensurePokemon(n); } catch { return null; } }, 8);
+  const normNames = await pMap(names, async n=> getDefaultPokemonNameForSpecies(n), 8);
+  const fetched = await pMap(normNames, async n=>{ try { return await ensurePokemon(n); } catch { return null; } }, 8);
   const map = new Map(fetched.filter(Boolean).map(p=>[p.name, p]));
 
     // Render each path in a row with conditions between
@@ -540,9 +559,10 @@ function applyTheme(v){ document.documentElement.setAttribute('data-theme', v); 
 const savedTheme = localStorage.getItem('theme') || 'auto'; applyTheme(savedTheme);
 themeToggle.addEventListener('click', ()=>{ const cur = document.documentElement.getAttribute('data-theme'); const next = cur==='dark' ? 'light' : cur==='light' ? 'auto' : 'dark'; localStorage.setItem('theme', next); applyTheme(next); });
 
-$('#resetBtn').addEventListener('click', async ()=>{ $('#searchInput').value=''; $('#typeFilter').value=''; $('#genFilter').value=''; state.currentType=''; state.currentGen=''; state.searchTerm=''; currentTab='explore'; tabs.forEach(x=>{ x.classList.toggle('active', x.dataset.tab==='explore'); x.setAttribute('aria-selected', x.dataset.tab==='explore'); }); await recomputeResults(); });
+$('#resetBtn').addEventListener('click', async ()=>{ newView(); $('#searchInput').value=''; $('#typeFilter').value=''; $('#genFilter').value=''; state.currentType=''; state.currentGen=''; state.searchTerm=''; currentTab='explore'; tabs.forEach(x=>{ x.classList.toggle('active', x.dataset.tab==='explore'); x.setAttribute('aria-selected', x.dataset.tab==='explore'); }); await recomputeResults(); });
 $('#searchForm').addEventListener('submit', (e)=>{
   e.preventDefault();
+  newView();
   const q = $('#searchInput').value;
   if (currentTab === 'items') runItemSearch(q);
   else runSearch(q);
@@ -553,26 +573,28 @@ $('#searchForm').addEventListener('submit', (e)=>{
   try {
     const [typesData, gensData] = await Promise.all([fetchJSON(API.types()), fetchJSON(API.generations())]);
     const typeSel = $('#typeFilter'); (typesData?.results||[]).forEach(t => { const opt = document.createElement('option'); opt.value = t.name; opt.textContent = cap(t.name); typeSel.appendChild(opt); });
-    typeSel.addEventListener('change', (e)=> applyTypeFilter(e.target.value));
+  typeSel.addEventListener('change', (e)=> applyTypeFilter(e.target.value));
 
     const genSel = $('#genFilter'); (gensData?.results||[]).forEach((g, idx) => { const opt = document.createElement('option'); opt.value = g.name; opt.textContent = `Gen ${idx+1} – ${cap(g.name)}`; genSel.appendChild(opt); });
-    genSel.addEventListener('change', (e)=> applyGenerationFilter(e.target.value));
+  genSel.addEventListener('change', (e)=> applyGenerationFilter(e.target.value));
 
-    // Count selector
+    // Count selector (only affects filtered results and evolutions sampling, not browse page sizes)
     const countSel = $('#countFilter');
     if (countSel) {
       const saved = localStorage.getItem('count') || '24';
       countSel.value = saved;
       const applyCount = (val)=>{
+        newView();
         localStorage.setItem('count', val);
-        const n = (val==='all') ? 9999 : Number(val)||24;
-        state.pageSize = n; itemsState.pageSize = n;
-        if (currentTab==='explore') { state.nextOffset = 0; grid.innerHTML=''; state.mode='browse'; loadNextPage(); }
-        else if (currentTab==='items') { itemsState.nextOffset=0; grid.innerHTML=''; itemsState.mode='browse'; loadNextItemsPage(); }
-        else if (currentTab==='evolutions') { renderEvolutionCatalog(); }
-        else if (currentTab==='favorites') { renderFavorites(); }
+        // Recompute only where count matters
+        if (currentTab==='explore') {
+          // Only affects filtered/search mode; in pure browse, keep infinite scroll page size
+          if (state.currentType || state.currentGen || state.searchTerm) recomputeResults();
+        } else if (currentTab==='evolutions') {
+          renderEvolutionCatalog();
+        }
       };
-      applyCount(saved);
+  // Do not call applyCount on startup to avoid canceling initial load; only respond to user changes
       countSel.addEventListener('change', (e)=> applyCount(e.target.value));
     }
   } catch(e) { console.warn('No se pudieron cargar filtros.', e); }
@@ -582,6 +604,7 @@ $('#searchForm').addEventListener('submit', (e)=>{
 let currentTab = 'explore';
 const tabs = $$('.tab');
 tabs.forEach(t => t.addEventListener('click', ()=>{
+  newView();
   tabs.forEach(x=>{ x.classList.toggle('active', x===t); x.setAttribute('aria-selected', x===t); });
   currentTab = t.dataset.tab;
   // Clear any lingering alert from previous tab (e.g., empty favorites)
@@ -592,6 +615,8 @@ tabs.forEach(t => t.addEventListener('click', ()=>{
   // reset gated compare when leaving Compare tab
   if (currentTab !== 'compare') compareViewArmed = false;
   if (currentTab === 'explore') {
+  // Ensure sane browse page size
+  state.pageSize = 24;
     // restaurar vista de exploración (no favoritos)
     grid.innerHTML = '';
     if (!state.currentType && !state.currentGen && !state.searchTerm) {
@@ -604,6 +629,8 @@ tabs.forEach(t => t.addEventListener('click', ()=>{
   } else if (currentTab === 'evolutions') {
     renderEvolutionCatalog();
   } else if (currentTab === 'items') {
+  // Ensure sane browse page size for items as well
+  itemsState.pageSize = 24;
   grid.innerHTML = '';
   itemsState.mode = itemsState.searchTerm ? 'search' : 'browse';
   itemsState.nextOffset = 0; 
@@ -617,18 +644,20 @@ tabs.forEach(t => t.addEventListener('click', ()=>{
 }));
 
 function renderFavorites(){
+  const token = viewToken;
   const ids = [...favStore.all()].map(Number).sort((a,b)=>a-b);
   grid.innerHTML = '';
   if (ids.length===0) { showAlert('Aún no tienes favoritos.'); return; } else { showAlert(''); }
   grid.setAttribute('aria-busy','true');
-  const skeletons = Array.from({length: Math.min(8, ids.length)}, cardSkeleton); skeletons.forEach(s=>grid.appendChild(s));
+  const skeletons = Array.from({length: Math.min(8, ids.length)}, cardSkeleton); skeletons.forEach(s=>{ if (token===viewToken) grid.appendChild(s); });
   (async ()=>{
     try {
       const detailed = await pMap(ids, async id=>ensurePokemon(id), 10);
+      if (token!==viewToken) return;
       grid.innerHTML = '';
       detailed.forEach(p=> grid.appendChild(cardFor(p)));
     } catch(e){ console.error(e); showAlert('No pudimos cargar tus favoritos.'); }
-    finally { grid.setAttribute('aria-busy','false'); }
+  finally { if (token===viewToken) grid.setAttribute('aria-busy','false'); }
   })();
 }
 
@@ -721,6 +750,7 @@ function updateSelectedCardsHighlight(){
 }
 
 function renderCompareIntro(){
+  const token = viewToken;
   showAlert('Haz clic en tarjetas para añadirlas a la comparación.');
   grid.innerHTML = '';
   // Muestra una selección inicial rápida
@@ -728,19 +758,22 @@ function renderCompareIntro(){
     try {
       const data = await fetchJSON(API.list(12,0));
       const detailed = await pMap(data.results, r=>ensurePokemon(r.url), 8);
-      detailed.forEach(p=> grid.appendChild(cardFor(p)));
+    if (token!==viewToken) return;
+    detailed.forEach(p=> grid.appendChild(cardFor(p)));
     } catch {}
   })();
 }
 
 function renderCompareView(){
+  const token = viewToken;
   showAlert('');
   grid.innerHTML = '';
   const ids = [...compareSet].slice(0, MAX_COMPARE);
   (async()=>{
     try {
       const ps = await pMap(ids, id=>ensurePokemon(id), 6);
-      ps.forEach(p=>{
+    if (token!==viewToken) return;
+    ps.forEach(p=>{
         const col = document.createElement('article'); col.className = 'card';
         const types = (p.types||[]).map(t=>t.type.name);
         const statsHtml = (p.stats||[]).map(s=>{
@@ -791,7 +824,12 @@ window.addEventListener('hashchange', async ()=>{
 
 (async function bootstrap(){
   applyInitialState();
-  await recomputeResults(); // this covers both browse and filtered/search states
+  // Initial load: if there are no filters and we are on Explore, directly load first page fast
+  if (!state.currentType && !state.currentGen && !state.searchTerm && currentTab==='explore') {
+    state.mode='browse'; state.nextOffset=0; await loadNextPage();
+  } else {
+    await recomputeResults(); // covers filtered/search or non-explore initial tabs
+  }
   // if hash has pokemon, open it
   const m = location.hash.match(/^#\/pokemon\/(\w+)/);
   if (m) { try { openModal(await ensurePokemon(m[1])); } catch {} }
@@ -806,6 +844,7 @@ window.addEventListener('hashchange', async ()=>{
 
 // Evolutions Tab (catalog)
 async function renderEvolutionCatalog(){
+  const token = viewToken;
   grid.innerHTML = '';
   grid.setAttribute('aria-busy','true');
   try {
@@ -831,7 +870,11 @@ async function renderEvolutionCatalog(){
     const renderedChains = new Set();
     // render each with its evo chain compact
     for (const pkm of detailed) {
-      const species = await fetchJSON(API.species(pkm.id));
+      let species;
+      try {
+        const speciesUrl = pkm?.species?.url || API.species(pkm.id);
+        species = await fetchJSON(speciesUrl);
+      } catch { continue; }
       const chainUrl = species?.evolution_chain?.url; if (!chainUrl) continue;
       const chainId = chainUrl.match(/evolution-chain\/(\d+)/)?.[1];
       const chain = await fetchJSON(API.evolutionChain(chainId));
@@ -853,9 +896,11 @@ async function renderEvolutionCatalog(){
       if (renderedChains.has(chainSig)) continue; // already rendered this chain for a previous Pokémon
       renderedChains.add(chainSig);
   const uniqueNames = Array.from(new Set(paths.flat().map(s=>s.name)));
-  const fetched = await pMap(uniqueNames, async n=>{ try { return await ensurePokemon(n); } catch { return null; }}, 6);
+  const normNames = await pMap(uniqueNames, n=>getDefaultPokemonNameForSpecies(n), 8);
+  const fetched = await pMap(normNames, async n=>{ try { return await ensurePokemon(n); } catch { return null; }}, 6);
   const map = new Map(fetched.filter(Boolean).map(p=>[p.name,p]));
-      const wrap = document.createElement('div'); wrap.className='evo-card';
+  if (token!==viewToken) return;
+  const wrap = document.createElement('div'); wrap.className='evo-card';
       wrap.innerHTML = `<div class="head"><strong>${cap(pkm.name)}</strong><span class="muted">${idFmt(pkm.id)}</span></div><div class="paths"></div>`;
       const pathsEl = wrap.querySelector('.paths');
       paths.forEach(path=>{
@@ -868,24 +913,29 @@ async function renderEvolutionCatalog(){
         });
         pathsEl.appendChild(row);
       });
-      grid.appendChild(wrap);
+    if (token===viewToken) grid.appendChild(wrap);
     }
   } catch(e){ console.warn('Evolution catalog error', e); showAlert('No pudimos cargar la pestaña de evoluciones.'); }
-  finally { grid.setAttribute('aria-busy','false'); }
+  finally { if (token===viewToken) grid.setAttribute('aria-busy','false'); }
 }
 
 // Items search and modal
 async function runItemSearch(q){
   itemsState.searchTerm = (q||'').trim().toLowerCase();
+  const token = viewToken;
   grid.innerHTML = ''; showAlert('');
   if (!itemsState.searchTerm){
     itemsState.mode='browse'; itemsState.nextOffset=0; await loadNextItemsPage(); return;
   }
   itemsState.mode='search'; grid.setAttribute('aria-busy','true');
-  const skeletons = Array.from({length: 6}, cardSkeleton); skeletons.forEach(s=>grid.appendChild(s));
-  try { const it = await ensureItem(itemsState.searchTerm); grid.innerHTML=''; grid.appendChild(cardForItem(it)); }
-  catch(e){ grid.innerHTML=''; showAlert('No hay items con ese término.'); }
-  finally { grid.setAttribute('aria-busy','false'); }
+  const skeletons = Array.from({length: 6}, cardSkeleton); skeletons.forEach(s=>{ if (token===viewToken) grid.appendChild(s); });
+  try {
+    const it = await ensureItem(itemsState.searchTerm);
+    if (token!==viewToken) return;
+    grid.innerHTML=''; grid.appendChild(cardForItem(it));
+  }
+  catch(e){ if (token===viewToken){ grid.innerHTML=''; showAlert('No hay items con ese término.'); } }
+  finally { if (token===viewToken) grid.setAttribute('aria-busy','false'); }
 }
 
 function openItemModal(it){
