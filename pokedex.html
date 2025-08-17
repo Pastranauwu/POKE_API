@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es" data-theme="auto">
+        <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Pokedex • Minimal</title>
+        <meta name="description" content="Pokedex minimalista y responsiva consumiendo PokeAPI" />
+        <link rel="stylesheet" href="./assets/css/style.css" />
+    </head>
+    <body>
+        <header class="header" role="banner">
+            <div class="topbar">
+                <div class="brand" aria-label="Pokedex minimal">
+                    <span class="dot" aria-hidden="true"></span>
+                    <span>Pokedex</span>
+                    <span class="muted">• PokeAPI</span>
+                </div>
+                <div class="actions">
+                    <button id="themeToggle" class="btn" aria-pressed="false" title="Alternar tema">🌙</button>
+                </div>
+            </div>
+        </header>
+
+            <main class="container" id="app" role="main">
+                        <nav class="tabs" role="tablist" aria-label="Secciones">
+                            <button class="tab active" role="tab" aria-selected="true" data-tab="explore">Explorar</button>
+                            <button class="tab" role="tab" aria-selected="false" data-tab="favorites">Favoritos</button>
+                            <button class="tab" role="tab" aria-selected="false" data-tab="evolutions">Evoluciones</button>
+                        <button class="tab" role="tab" aria-selected="false" data-tab="items">Items</button>
+                        <button class="tab" role="tab" aria-selected="false" data-tab="compare">Comparar</button>
+                        </nav>
+
+                <section class="toolbar" aria-label="Controles">
+                    <form id="searchForm" class="chip" role="search" aria-label="Buscar Pokémon">
+                        🔎
+                        <input id="searchInput" name="q" type="search" placeholder="Buscar por nombre o ID…" autocomplete="off" />
+                    </form>
+                    <label class="chip" for="typeFilter">
+                        🏷️ <select id="typeFilter" aria-label="Filtrar por tipo">
+                            <option value="">Todos los tipos</option>
+                        </select>
+                    </label>
+                    <label class="chip" for="genFilter">
+                        🧬 <select id="genFilter" aria-label="Filtrar por generación">
+                            <option value="">Todas las generaciones</option>
+                        </select>
+                    </label>
+                    <label class="chip" for="countFilter">
+                        📦 <select id="countFilter" aria-label="Cantidad a mostrar">
+                            <option value="24">24</option>
+                            <option value="48">48</option>
+                            <option value="96">96</option>
+                            <option value="200">200</option>
+                            <option value="all">Todos</option>
+                        </select>
+                    </label>
+                    <button id="resetBtn" class="btn" title="Limpiar filtros">Limpiar</button>
+                </section>
+
+                <div id="alert" class="alert" role="status" hidden></div>
+                <section id="grid" class="grid" aria-live="polite" aria-busy="false"></section>
+                <div id="compareBar" class="compare-bar" hidden>
+                    <div class="compare-list" id="compareList" aria-live="polite"></div>
+                    <button id="compareClear" class="btn" type="button" title="Limpiar comparación">Limpiar</button>
+                </div>
+                <div style="display:flex;justify-content:center;margin:16px 0">
+                    <button id="loadMore" class="btn" type="button">Cargar más</button>
+                </div>
+                <div id="sentinel" class="sentinel" aria-hidden="true"></div>
+            </main>
+
+        <div id="overlay" class="overlay" role="presentation"></div>
+        <dialog id="modal" class="modal" aria-labelledby="modalTitle" aria-modal="true">
+            <div class="modal-header">
+                <strong id="modalTitle">Detalle</strong>
+                <button id="modalClose" class="btn" aria-label="Cerrar">✕</button>
+            </div>
+                    <div class="modal-body">
+                        <div class="art"><img id="modalImg" alt="Arte del Pokémon" /></div>
+                        <div>
+                            <div id="modalMeta" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px"></div>
+                            <div class="stats" id="modalStats"></div>
+                                    <div class="games" style="margin-top:10px">
+                                        <div class="evo-title muted">Juegos</div>
+                                        <div id="modalGames" class="badges"></div>
+                                    </div>
+                            <div class="evo">
+                                <div class="evo-title muted">Evoluciones</div>
+                                <div id="modalEvos" class="evo-list"></div>
+                            </div>
+                        </div>
+                    </div>
+        </dialog>
+
+        <script src="./assets/js/app.js" defer></script>
+    </body>
+    </html>
