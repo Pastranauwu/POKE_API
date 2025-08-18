@@ -66,6 +66,31 @@ body {
 }
 .chip input, .chip select { background: transparent; color: inherit; border: none; outline: 0; min-width: 120px; font: inherit; }
 .chip input::placeholder { color: var(--muted); }
+.chip select:focus-visible { outline: 2px solid var(--accent); border-radius: 8px; }
+
+/* Form controls theming */
+/* Ensure browser-native UI (like select popups) adopts the current theme */
+:root { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+@media (prefers-color-scheme: light) { html[data-theme="auto"] { color-scheme: light; } }
+@media (prefers-color-scheme: dark) { html[data-theme="auto"] { color-scheme: dark; } }
+
+/* Harmonize <select>/<option> colors across themes */
+select, optgroup, option { color: var(--text); background-color: var(--card); }
+/* Reduce UA styling that causes blue highlight/gray look */
+select { appearance: none; -webkit-appearance: none; -moz-appearance: none; background-image: none; }
+.chip select { padding-right: 18px; }
+/* Custom selected/highlight colors */
+select option:checked, select option:focus, select option:active { background-color: color-mix(in srgb, var(--accent) 28%, var(--card)); color: var(--text); }
+/* Keep the chip capsule background while the dropdown list uses --card */
+.chip select { background-color: transparent; }
+select { border-radius: 8px; }
+select option[disabled], select optgroup { color: var(--muted); }
+select option:checked { background-color: color-mix(in srgb, var(--accent) 24%, var(--card)); color: var(--text); }
+/* Not all browsers support :hover on option, but it helps where available */
+select option:hover { background-color: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--text); }
+/* Align accent for check/radio if used later */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .btn { cursor: pointer; background: var(--card); color: var(--text); border: 1px solid var(--border); padding: 10px 12px; border-radius: 12px; box-shadow: var(--shadow); }
 .btn[aria-pressed="true"] { outline: 2px solid var(--accent); }
 .muted { color: var(--muted); font-weight: 500; }

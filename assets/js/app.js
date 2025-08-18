@@ -1,7 +1,7 @@
 // ===== Config & Helpers =====
 const API = {
   list: (limit=24, offset=0) => `https://pokeapi.co/api/v2/pokemon?limit=${limit}&offset=${offset}`,
-  pokemon: (idOrName) => `https://pokeapi.co/api/v2/pokemon/${idOrName}`,
+  pokemon: (idOrName) => `https://pokeapi.co/api/v2/pokemon//${idOrName}`,
   species: (idOrName) => `https://pokeapi.co/api/v2/pokemon-species/${idOrName}`,
   evolutionChain: (id) => `https://pokeapi.co/api/v2/evolution-chain/${id}`,
   types: () => `https://pokeapi.co/api/v2/type`,
@@ -113,6 +113,7 @@ const compareBar = $('#compareBar');
 const compareList = $('#compareList');
 const compareClear = $('#compareClear');
 const compareGo = $('#compareGo');
+const compareSearchBtn = document.getElementById('compareSearch');
 let compareViewArmed = false; // show columns only after pressing Compare in Compare tab
 
 // Prevent stale async renders across tabs/views
@@ -123,6 +124,8 @@ const newView = () => (++viewToken);
 function updateToolbarVisibility(){
   const typeLabel = document.querySelector('label[for="typeFilter"]');
   if (typeLabel) typeLabel.style.display = (currentTab==='items') ? 'none' : '';
+  // Show Buscar button only on Compare tab
+  if (compareSearchBtn) compareSearchBtn.hidden = (currentTab !== 'compare');
 }
 function cardSkeleton() {
   const c = document.createElement('article');
@@ -392,6 +395,9 @@ async function applyTypeFilter(typeName) {
     grid.innerHTML='';
     showAlert('');
     if (itemsState.searchTerm) await runItemSearch(itemsState.searchTerm); else { itemsState.mode='browse'; itemsState.nextOffset=0; await loadNextItemsPage(); }
+  } else if (currentTab === 'compare') {
+    // Wait for explicit Buscar action
+    showAlert('Pulsa Buscar para aplicar filtros en Comparar.');
   }
 }
 
@@ -407,6 +413,8 @@ async function applyGenerationFilter(gen) {
     grid.innerHTML='';
     showAlert('');
     if (itemsState.searchTerm) await runItemSearch(itemsState.searchTerm); else { itemsState.mode='browse'; itemsState.nextOffset=0; await loadNextItemsPage(); }
+  } else if (currentTab === 'compare') {
+    showAlert('Pulsa Buscar para aplicar filtros en Comparar.');
   }
 }
 
@@ -564,8 +572,14 @@ $('#searchForm').addEventListener('submit', (e)=>{
   e.preventDefault();
   newView();
   const q = $('#searchInput').value;
-  if (currentTab === 'items') runItemSearch(q);
-  else runSearch(q);
+  if (currentTab === 'items') {
+    runItemSearch(q);
+  } else if (currentTab === 'compare') {
+    state.searchTerm = (q||'').trim().toLowerCase();
+    renderCompareFilteredList();
+  } else {
+    runSearch(q);
+  }
 });
 
 // Type & Generation selectors
@@ -636,7 +650,14 @@ tabs.forEach(t => t.addEventListener('click', ()=>{
   itemsState.nextOffset = 0; 
   if (itemsState.mode==='search') runItemSearch(itemsState.searchTerm); else loadNextItemsPage();
   } else if (currentTab === 'compare') {
-    if (compareViewArmed && compareSet.size > 0) renderCompareView(); else renderCompareIntro();
+    // If filters present or search term, render a filtered pick-list; else intro sample
+    if (state.currentType || state.currentGen || state.searchTerm) {
+      renderCompareFilteredList();
+    } else if (compareViewArmed && compareSet.size > 0) {
+      renderCompareView();
+    } else {
+      renderCompareIntro();
+    }
   }
   setParams({ q: state.searchTerm, type: state.currentType, gen: state.currentGen, tab: currentTab });
   updateLoadMoreVisibility();
@@ -796,6 +817,60 @@ function renderCompareView(){
     } catch(e){ console.warn('Compare view error', e); showAlert('No pudimos mostrar la comparación.'); }
   })();
 }
+
+// In Compare tab, show a grid of candidates based on current filters/search
+async function renderCompareFilteredList(){
+  const token = viewToken;
+  showAlert('Selecciona tarjetas para armar la comparación.');
+  grid.innerHTML = '';
+  grid.setAttribute('aria-busy','true');
+  try {
+    let names = [];
+    if (state.searchTerm) {
+      // single target potentially
+      try {
+        const p = await ensurePokemon(state.searchTerm);
+        // Respect filters if both present
+        if (state.currentType && !(p.types||[]).some(t=>t.type.name===state.currentType)) throw new Error('no-match');
+        if (state.currentGen) { const gs = await getGenNames(state.currentGen); if (!gs.has(p.name)) throw new Error('no-match'); }
+        names = [p.name];
+      } catch { names = []; }
+    } else if (state.currentType || state.currentGen) {
+      if (state.currentType && state.currentGen) {
+        const [typeNames, genSet] = await Promise.all([getTypeNames(state.currentType), getGenNames(state.currentGen)]);
+        names = typeNames.filter(n=>genSet.has(n));
+      } else if (state.currentType) names = await getTypeNames(state.currentType);
+      else names = Array.from(await getGenNames(state.currentGen));
+    }
+    const maxCount = ($('#countFilter')?.value==='all') ? Infinity : Number($('#countFilter')?.value||24);
+    names = names.slice(0, maxCount);
+    if (names.length===0) { grid.innerHTML=''; showAlert('Sin resultados con los filtros actuales.'); return; }
+    const detailed = await pMap(names, n=>ensurePokemon(n), 8);
+    if (token!==viewToken) return;
+    grid.innerHTML='';
+    detailed.sort((a,b)=>a.id-b.id).forEach(p=> grid.appendChild(cardFor(p)));
+  } catch(e){ console.warn('Compare filter list error', e); showAlert('No pudimos aplicar los filtros.'); }
+  finally { if (token===viewToken) grid.setAttribute('aria-busy','false'); updateSelectedCardsHighlight(); }
+}
+
+// Wire Buscar button for Compare tab
+compareSearchBtn?.addEventListener('click', ()=>{
+  if (currentTab === 'compare') {
+    newView();
+    renderCompareFilteredList();
+  }
+});
+
+// In Compare tab, pressing Enter on search form should trigger filtered list instead of navigate
+document.getElementById('searchForm')?.addEventListener('submit', (e)=>{
+  if (currentTab === 'compare') {
+    e.preventDefault();
+    newView();
+    const q = document.getElementById('searchInput')?.value || '';
+    state.searchTerm = (q||'').trim().toLowerCase();
+    renderCompareFilteredList();
+  }
+});
 
 // Routing: open modal by hash and sync initial filters from URL
 function applyInitialState(){
